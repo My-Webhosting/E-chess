@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Online Chess (2D + VR)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<style>
+*{box-sizing:border-box;font-family:Inter,system-ui,sans-serif}
+body{margin:0;background:#0b0f1a;color:white;display:flex;justify-content:center}
+#app{width:100%;max-width:900px;padding:20px}
+.menu,.game{background:#121a2b;border-radius:16px;padding:20px;box-shadow:0 20px 40px rgba(0,0,0,.4)}
+button,input{background:#1c2742;border:none;color:white;padding:12px;border-radius:10px;margin:6px 0;width:100%}
+button:hover{background:#2c3a66;cursor:pointer}
+#board{display:grid;grid-template-columns:repeat(8,1fr);max-width:420px;margin:auto}
+.square{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:36px}
+.dark{background:#2f3f6e}.light{background:#eef2ff;color:black}
+.selected{outline:4px solid gold}.move{background:#ffd70055}
+.white-piece{color:white;text-shadow:0 4px 6px #000}
+.black-piece{color:black;text-shadow:0 4px 6px #fff6}
+#top{display:flex;justify-content:space-between;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="menu" id="menu">
+<h1>♟ Online Chess</h1>
+<input id="username" placeholder="Temporary username" />
+<button onclick="startLocal()">Local Multiplayer</button>
+<button onclick="startOnline()">Host Online Game</button>
+<input id="joinId" placeholder="Host Username" />
+<button onclick="joinOnline()">Join Online Game</button>
+<hr>
+<button onclick="startVR()">Enter VR (Quest/WebXR)</button>
+</div>
+<div class="game" id="game" style="display:none;">
+<div id="top"><div id="status"></div><button onclick="location.reload()">Exit</button></div>
+<div id="board"></div>
+</div>
+</div>
+
+<script>
+// ================= CORE =================
+const pieces={r:'♜',n:'♞',b:'♝',q:'♛',k:'♚',p:'♟',R:'♖',N:'♘',B:'♗',Q:'♕',K:'♔',P:'♙'};
+let boardState,selected=null,turn='w',peer,conn,myColor='both';
+const isWhite=p=>p===p.toUpperCase();
+
+function initBoard(){boardState=["rnbqkbnr","pppppppp","........","........","........","........","PPPPPPPP","RNBQKBNR"];draw();}
+
+function draw(){const b=document.getElementById('board');b.innerHTML='';
+boardState.forEach((row,y)=>[...row].forEach((c,x)=>{
+ let d=document.createElement('div');d.className='square '+((x+y)%2?'dark':'light');
+ if(selected&&selected.x===x&&selected.y===y)d.classList.add('selected');
+ d.textContent=pieces[c]||''; if(c!='.')d.classList.add(isWhite(c)?'white-piece':'black-piece');
+ d.onclick=()=>click2D(x,y); b.appendChild(d);
+}));showMoves();document.getElementById('status').textContent=(turn=='w'?'White':'Black')+' to move';}
+
+function click2D(x,y){let p=boardState[y][x];
+ if(selected&&canMove(selected.x,selected.y,x,y)){move(selected.x,selected.y,x,y);selected=null;return;}
+ if(p!='.'&&((turn=='w'&&isWhite(p))||(turn=='b'&&!isWhite(p))))selected={x,y}; draw();}
+
+function move(x1,y1,x2,y2){let r=[...boardState[y1]];let p=r[x1];r[x1]='.';boardState[y1]=r.join('');
+ r=[...boardState[y2]];r[x2]=p;boardState[y2]=r.join('');turn=turn=='w'?'b':'w';
+ if(conn)conn.send({boardState,turn}); draw(); if(window.updateVR)updateVR();}
+
+function canMove(x1,y1,x2,y2){let p=boardState[y1][x1]; if(boardState[y2][x2]!='.'&&isWhite(p)==isWhite(boardState[y2][x2]))return false;
+ let dx=x2-x1,dy=y2-y1;
+ if(p.toLowerCase()=='p'){let d=isWhite(p)?-1:1,s=isWhite(p)?6:1;
+ if(dx==0&&dy==d&&boardState[y2][x2]=='.')return true;
+ if(dx==0&&y1==s&&dy==d*2&&boardState[y1+d][x1]=='.')return true;
+ if(Math.abs(dx)==1&&dy==d&&boardState[y2][x2]!='.')return true;return false;}
+ if(p.toLowerCase()=='r')return clearPath(x1,y1,x2,y2)&&(dx==0||dy==0);
+ if(p.toLowerCase()=='b')return clearPath(x1,y1,x2,y2)&&Math.abs(dx)==Math.abs(dy);
+ if(p.toLowerCase()=='q')return clearPath(x1,y1,x2,y2)&&(dx==0||dy==0||Math.abs(dx)==Math.abs(dy));
+ if(p.toLowerCase()=='n')return Math.abs(dx*dy)==2;
+ if(p.toLowerCase()=='k')return Math.abs(dx)<=1&&Math.abs(dy)<=1;return false;}
+
+function clearPath(x1,y1,x2,y2){let dx=Math.sign(x2-x1),dy=Math.sign(y2-y1);x1+=dx;y1+=dy;
+ while(x1!=x2||y1!=y2){if(boardState[y1][x1]!='.')return false;x1+=dx;y1+=dy;}return true;}
+
+function showMoves(){if(!selected)return;document.querySelectorAll('.square').forEach((s,i)=>{
+ let x=i%8,y=Math.floor(i/8);if(canMove(selected.x,selected.y,x,y))s.classList.add('move');});}
+
+function startLocal(){menu.style.display='none';game.style.display='block';initBoard();}
+function startOnline(){myColor='w';peer=new Peer(username.value||'host');peer.on('connection',c=>{conn=c;setupConn();});startLocal();}
+function joinOnline(){myColor='b';peer=new Peer();peer.on('open',()=>{conn=peer.connect(joinId.value);setupConn();});startLocal();}
+function setupConn(){conn.on('data',d=>{boardState=d.boardState;turn=d.turn;draw();if(window.updateVR)updateVR();});}
+
+// ================= VR =================
+let vrSelected=null;
+
+function startVR(){document.body.innerHTML=`
+<a-scene xr-mode-ui="enabled:true" background="color:#111">
+<a-entity camera look-controls position="0 1.6 3"></a-entity>
+<a-entity laser-controls="hand:left"></a-entity>
+<a-entity laser-controls="hand:right"></a-entity>
+<a-box position="0 -0.05 0" width="2.4" depth="2.4" height="0.1" color="#222"></a-box>
+<a-entity id="vrBoard"></a-entity>
+<a-entity id="vrPieces"></a-entity>
+</a-scene>`;
+ makeVR();}
+
+function makeVR(){const board=document.getElementById('vrBoard');let s=.25;
+ for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+  let px=(x-3.5)*s,pz=(y-3.5)*s,c=(x+y)%2?'#333':'#ddd';
+  let t=document.createElement('a-box');
+  t.setAttribute('position',`${px} 0 ${pz}`);
+  t.setAttribute('width',s);t.setAttribute('height',.02);t.setAttribute('depth',s);
+  t.setAttribute('color',c);t.dataset.x=x;t.dataset.y=y;
+  t.addEventListener('click',()=>vrClick(x,y));board.appendChild(t);
+ }
+ updateVR();}
+
+function updateVR(){const pcon=document.getElementById('vrPieces');pcon.innerHTML='';let s=.25;
+ boardState.forEach((row,y)=>[...row].forEach((c,x)=>{if(c=='.')return;
+  let e=document.createElement('a-sphere');
+  e.setAttribute('radius','.06');
+  e.setAttribute('color',isWhite(c)?'#fff':'#000');
+  e.setAttribute('position',`${(x-3.5)*s} .08 ${(y-3.5)*s}`);
+  e.dataset.x=x;e.dataset.y=y;
+  e.addEventListener('click',()=>vrPick(x,y));pcon.appendChild(e);
+ }));}
+
+function vrPick(x,y){let p=boardState[y][x];
+ if(p!='.'&&((turn=='w'&&isWhite(p))||(turn=='b'&&!isWhite(p))))vrSelected={x,y};}
+
+function vrClick(x,y){if(vrSelected&&canMove(vrSelected.x,vrSelected.y,x,y)){
+ move(vrSelected.x,vrSelected.y,x,y);vrSelected=null;}}
+
+(function tests(){initBoard();console.assert(canMove(0,6,0,4));})();
+</script>
+</body>
+</html>
