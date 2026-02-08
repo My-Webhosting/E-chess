@@ -6,10 +6,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/aframe-extras@6.1.1/dist/aframe-extras.min.js"></script>
 <style>
 body{margin:0; background:#0b0f1a; color:white; font-family:Inter,sans-serif;}
 button,input{width:100%; margin:6px 0; padding:12px; border-radius:10px; border:none; background:#1c2742; color:white;}
 button:hover{background:#2c3a66; cursor:pointer;}
+#capturedWhite, #capturedBlack { position:fixed; bottom:0; width:200px; height:80px; display:flex; flex-wrap:wrap; padding:4px; background:#121a2b88; border-radius:8px; }
+#capturedWhite { left:0; }
+#capturedBlack { right:0; }
 </style>
 </head>
 <body>
@@ -21,23 +25,27 @@ button:hover{background:#2c3a66; cursor:pointer;}
 <button onclick="joinVROnline()">Join Online VR Game</button>
 </div>
 
+<div id="capturedWhite"></div>
+<div id="capturedBlack"></div>
+
 <script>
 let boardState, turn='w', peer, conn, myColor='both';
-let pieceEntities = {};
+let pieceEntities = {}, capturedWhite = [], capturedBlack = [];
 const squareSize = 0.25;
+const animDuration = 500;
 const pieceModels = {
-  r:'https://example.com/models/rook.glb',
-  n:'https://example.com/models/knight.glb',
-  b:'https://example.com/models/bishop.glb',
-  q:'https://example.com/models/queen.glb',
-  k:'https://example.com/models/king.glb',
-  p:'https://example.com/models/pawn.glb',
-  R:'https://example.com/models/rook.glb',
-  N:'https://example.com/models/knight.glb',
-  B:'https://example.com/models/bishop.glb',
-  Q:'https://example.com/models/queen.glb',
-  K:'https://example.com/models/king.glb',
-  P:'https://example.com/models/pawn.glb'
+  r:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/rook.glb',
+  n:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/knight.glb',
+  b:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/bishop.glb',
+  q:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/queen.glb',
+  k:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/king.glb',
+  p:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/pawn.glb',
+  R:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/rook.glb',
+  N:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/knight.glb',
+  B:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/bishop.glb',
+  Q:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/queen.glb',
+  K:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/king.glb',
+  P:'https://cdn.jsdelivr.net/gh/KenanZ/3d-chess-models/pawn.glb'
 };
 
 function initBoard(){
@@ -63,7 +71,7 @@ function joinVROnline(){
 }
 
 function setupConn(){
- conn.on('data',d=>{boardState=d.boardState; turn=d.turn; updateVR();});
+ conn.on('data',d=>{boardState=d.boardState; turn=d.turn; capturedWhite=d.capturedWhite||[]; capturedBlack=d.capturedBlack||[]; updateVR();});
 }
 
 function startVRScene(){
@@ -108,19 +116,45 @@ function updateVR(){
      e.setAttribute('scale', '0.05 0.05 0.05');
      e.setAttribute('position', `${(x-3.5)*squareSize} 0.05 ${(y-3.5)*squareSize}`);
      e.setAttribute('grabbable','');
-     e.setAttribute('stretchable','');
-     e.setAttribute('draggable','');
      e.dataset.x=x; e.dataset.y=y;
      board.appendChild(e);
      pieceEntities[`${x},${y}`]=e;
    }
  }
+ updateCapturedDisplay();
+}
+
+function animateMove(entity, targetPos){
+ entity.setAttribute('animation__move', `property: position; to: ${targetPos.x} ${targetPos.y} ${targetPos.z}; dur: ${animDuration}; easing: easeInOutQuad`);
+}
+
+function handleMove(x1,y1,x2,y2){
+ if(!canMove(x1,y1,x2,y2)) return;
+ let target = boardState[y2][x2];
+ if(target !='.') {
+   if(target==target.toUpperCase()) capturedWhite.push(target);
+   else capturedBlack.push(target);
+ }
+ let entity = pieceEntities[`${x1},${y1}`];
+ let posX = (x2-3.5)*squareSize;
+ let posZ = (y2-3.5)*squareSize;
+ animateMove(entity, {x:posX, y:0.05, z:posZ});
+ setTimeout(()=> move(x1,y1,x2,y2), animDuration);
+ updateCapturedDisplay();
+}
+
+function updateCapturedDisplay(){
+ const cw = document.getElementById('capturedWhite');
+ const cb = document.getElementById('capturedBlack');
+ cw.innerHTML=''; cb.innerHTML='';
+ capturedWhite.forEach(c=>{let e=document.createElement('span'); e.textContent=c; cw.appendChild(e);});
+ capturedBlack.forEach(c=>{let e=document.createElement('span'); e.textContent=c; cb.appendChild(e);});
 }
 
 let vrSelected=null;
 function vrPick(x,y){
- if(vrSelected && canMove(vrSelected.x,vrSelected.y,x,y)){
-   move(vrSelected.x,vrSelected.y,x,y);
+ if(vrSelected){
+   handleMove(vrSelected.x,vrSelected.y,x,y);
    vrSelected=null;
  } else {
    let p = boardState[y][x];
@@ -132,7 +166,7 @@ function move(x1,y1,x2,y2){
  let r=[...boardState[y1]]; let p=r[x1]; r[x1]='.'; boardState[y1]=r.join('');
  r=[...boardState[y2]]; r[x2]=p; boardState[y2]=r.join('');
  turn=turn=='w'?'b':'w';
- if(conn) conn.send({boardState,turn});
+ if(conn) conn.send({boardState,turn,capturedWhite,capturedBlack});
  updateVR();
 }
 
