@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Quest VR Online Chess</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<style>
+body{margin:0; background:#0b0f1a; color:white; font-family:Inter,sans-serif;}
+button,input{width:100%; margin:6px 0; padding:12px; border-radius:10px; border:none; background:#1c2742; color:white;}
+button:hover{background:#2c3a66; cursor:pointer;}
+</style>
+</head>
+<body>
+<div id="menu">
+<h1>♟ Quest VR Online Chess</h1>
+<input id="username" placeholder="Temporary username">
+<button onclick="startVROnline()">Host Online VR Game</button>
+<input id="joinId" placeholder="Host Username">
+<button onclick="joinVROnline()">Join Online VR Game</button>
+</div>
+
+<script>
+let boardState, turn='w', peer, conn, myColor='both';
+let pieceEntities = {};
+const squareSize = 0.25;
+const pieceModels = {
+  r:'https://example.com/models/rook.glb',
+  n:'https://example.com/models/knight.glb',
+  b:'https://example.com/models/bishop.glb',
+  q:'https://example.com/models/queen.glb',
+  k:'https://example.com/models/king.glb',
+  p:'https://example.com/models/pawn.glb',
+  R:'https://example.com/models/rook.glb',
+  N:'https://example.com/models/knight.glb',
+  B:'https://example.com/models/bishop.glb',
+  Q:'https://example.com/models/queen.glb',
+  K:'https://example.com/models/king.glb',
+  P:'https://example.com/models/pawn.glb'
+};
+
+function initBoard(){
+ boardState=["rnbqkbnr","pppppppp","........","........","........","........","PPPPPPPP","RNBQKBNR"];
+ updateVR();
+}
+
+function startVROnline(){
+ myColor='w';
+ const name=username.value||'host';
+ peer=new Peer(name);
+ peer.on('connection',c=>{conn=c; setupConn();});
+ startVRScene();
+ initBoard();
+}
+
+function joinVROnline(){
+ myColor='b';
+ peer=new Peer();
+ peer.on('open',()=>{conn=peer.connect(joinId.value); setupConn();});
+ startVRScene();
+ initBoard();
+}
+
+function setupConn(){
+ conn.on('data',d=>{boardState=d.boardState; turn=d.turn; updateVR();});
+}
+
+function startVRScene(){
+ document.body.innerHTML=`
+ <a-scene vr-mode-ui='enabled:true'>
+   <a-entity camera look-controls position='0 1.6 3'></a-entity>
+   <a-entity laser-controls='hand:left'></a-entity>
+   <a-entity laser-controls='hand:right'></a-entity>
+   <a-entity id='chessBoard' position='0 0 -1' scale='0.6 0.6 0.6'></a-entity>
+ </a-scene>`;
+ makeVRBoard();
+}
+
+function makeVRBoard(){
+ const board = document.getElementById('chessBoard');
+ for(let y=0;y<8;y++){
+   for(let x=0;x<8;x++){
+     let tile=document.createElement('a-box');
+     tile.setAttribute('width',squareSize);
+     tile.setAttribute('height',0.02);
+     tile.setAttribute('depth',squareSize);
+     tile.setAttribute('position',`${(x-3.5)*squareSize} 0 ${(y-3.5)*squareSize}`);
+     tile.setAttribute('color',(x+y)%2?'#333':'#ddd');
+     tile.dataset.x=x; tile.dataset.y=y;
+     board.appendChild(tile);
+   }
+ }
+ updateVR();
+}
+
+function updateVR(){
+ const board = document.getElementById('chessBoard');
+ if(!board) return;
+ Object.values(pieceEntities).forEach(e=>e.parentNode.removeChild(e));
+ pieceEntities={};
+ for(let y=0;y<8;y++){
+   for(let x=0;x<8;x++){
+     let c = boardState[y][x];
+     if(c=='.') continue;
+     let e=document.createElement('a-entity');
+     e.setAttribute('gltf-model', pieceModels[c]);
+     e.setAttribute('scale', '0.05 0.05 0.05');
+     e.setAttribute('position', `${(x-3.5)*squareSize} 0.05 ${(y-3.5)*squareSize}`);
+     e.setAttribute('grabbable','');
+     e.setAttribute('stretchable','');
+     e.setAttribute('draggable','');
+     e.dataset.x=x; e.dataset.y=y;
+     board.appendChild(e);
+     pieceEntities[`${x},${y}`]=e;
+   }
+ }
+}
+
+let vrSelected=null;
+function vrPick(x,y){
+ if(vrSelected && canMove(vrSelected.x,vrSelected.y,x,y)){
+   move(vrSelected.x,vrSelected.y,x,y);
+   vrSelected=null;
+ } else {
+   let p = boardState[y][x];
+   if(p!='.' && ((turn=='w' && p==p.toUpperCase())||(turn=='b' && p==p.toLowerCase()))) vrSelected={x,y};
+ }
+}
+
+function move(x1,y1,x2,y2){
+ let r=[...boardState[y1]]; let p=r[x1]; r[x1]='.'; boardState[y1]=r.join('');
+ r=[...boardState[y2]]; r[x2]=p; boardState[y2]=r.join('');
+ turn=turn=='w'?'b':'w';
+ if(conn) conn.send({boardState,turn});
+ updateVR();
+}
+
+function canMove(x1,y1,x2,y2){
+ let p=boardState[y1][x1];
+ if(boardState[y2][x2]!='.' && (p.toUpperCase()===boardState[y2][x2].toUpperCase())) return false;
+ let dx=x2-x1, dy=y2-y1;
+ if(p.toLowerCase()=='p'){
+  let dir = p===p.toUpperCase()?-1:1, startRow = p===p.toUpperCase()?6:1;
+  if(dx===0 && dy===dir && boardState[y2][x2]=='.') return true;
+  if(dx===0 && y1===startRow && dy===dir*2 && boardState[y1+dir][x1]=='.') return true;
+  if(Math.abs(dx)===1 && dy===dir && boardState[y2][x2]!='.') return true;
+  return false;
+ }
+ return true;
+}
+
+initBoard();
+</script>
+</body>
+</html>
