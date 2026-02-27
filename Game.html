@@ -3,164 +3,198 @@
 <head>
 <meta charset="UTF-8">
 <title>Online AR/VR Chess</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
-<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js/aframe/build/aframe-ar.js"></script>
 <style>
-body { margin:0; background:#0b0f1a; color:white; font-family:Inter,sans-serif; }
-#menu, #game { max-width:900px; margin:auto; padding:20px; background:#121a2b; border-radius:16px; }
-button,input { width:100%; margin:6px 0; padding:12px; border-radius:10px; border:none; background:#1c2742; color:white; }
-button:hover{ background:#2c3a66; cursor:pointer; }
-#board { display:grid; grid-template-columns:repeat(8,1fr); max-width:420px; margin:auto; }
-.square{ aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-size:36px; }
+body{margin:0;background:#0b0f1a;color:white;font-family:Inter,sans-serif}
+#menu,#game{max-width:900px;margin:auto;padding:20px;background:#121a2b;border-radius:16px;margin-top:40px}
+button,input{width:100%;margin:6px 0;padding:12px;border-radius:10px;border:none;background:#1c2742;color:white}
+button:hover{background:#2c3a66;cursor:pointer}
+#board{display:grid;grid-template-columns:repeat(8,1fr);max-width:420px;margin:auto}
+.square{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:36px;transition:transform .2s}
+.square:hover{transform:scale(1.05)}
 .dark{background:#2f3f6e}
 .light{background:#eef2ff;color:black}
 .selected{outline:4px solid gold}
 .move{background:#ffd70055}
 .white-piece{color:white;text-shadow:0 4px 6px #000}
 .black-piece{color:black;text-shadow:0 4px 6px #fff6}
+#capturedWhite,#capturedBlack{margin-top:10px;min-height:28px}
+#status{margin-bottom:10px;font-weight:bold}
+#winScreen{display:none;position:fixed;inset:0;background:#000d;z-index:20;align-items:center;justify-content:center}
+#winBox{background:#121a2b;padding:30px;border-radius:16px;text-align:center}
+#promotionModal{display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#121a2b;padding:20px;border-radius:12px;z-index:15}
+#promotionModal button{width:auto;margin:5px;font-size:24px}
 </style>
 </head>
 <body>
+
 <div id="menu">
 <h1>♟ Online AR/VR Chess</h1>
 <input id="username" placeholder="Temporary username">
 <button onclick="startLocal()">Local Multiplayer</button>
+<button onclick="startSingle()">Singleplayer</button>
 <button onclick="startOnline()">Host Online Game</button>
 <input id="joinId" placeholder="Host Username">
 <button onclick="joinOnline()">Join Online Game</button>
-<hr>
-<button onclick="startAR()">Place Chessboard in Room (AR)</button>
 </div>
+
 <div id="game" style="display:none;">
 <div id="status"></div>
+<div id="capturedBlack"></div>
 <div id="board"></div>
+<div id="capturedWhite"></div>
+</div>
+
+<div id="promotionModal">
+<h3>Choose Promotion</h3>
+<div id="promotionChoices"></div>
+</div>
+
+<div id="winScreen">
+<div id="winBox">
+<h2 id="winText"></h2>
+<button onclick="closeWin()">Play Again</button>
+</div>
 </div>
 
 <script>
-// ================= CORE =================
 const pieces={r:'♜',n:'♞',b:'♝',q:'♛',k:'♚',p:'♟',R:'♖',N:'♘',B:'♗',Q:'♕',K:'♔',P:'♙'};
-let boardState, selected=null, turn='w', peer, conn, myColor='both';
+let boardState,selected=null,turn='w',mode='local',peer,conn;
+let capturedWhite=[],capturedBlack=[];
+let promotionTarget=null;
 const isWhite=p=>p===p.toUpperCase();
 
 function initBoard(){
  boardState=["rnbqkbnr","pppppppp","........","........","........","........","PPPPPPPP","RNBQKBNR"];
- draw();
+ capturedWhite=[];capturedBlack=[];turn='w';draw();
 }
 
 function draw(){
- const b=document.getElementById('board'); b.innerHTML='';
+ const b=document.getElementById('board');b.innerHTML='';
  boardState.forEach((row,y)=>[...row].forEach((c,x)=>{
   let d=document.createElement('div');
   d.className='square '+((x+y)%2?'dark':'light');
   if(selected&&selected.x===x&&selected.y===y)d.classList.add('selected');
   d.textContent=pieces[c]||'';
-  if(c!='.') d.classList.add(isWhite(c)?'white-piece':'black-piece');
+  if(c!='.')d.classList.add(isWhite(c)?'white-piece':'black-piece');
   d.onclick=()=>click2D(x,y);
   b.appendChild(d);
  }));
- showMoves();
  document.getElementById('status').textContent=(turn=='w'?'White':'Black')+' to move';
+ document.getElementById('capturedWhite').textContent='White captured: '+capturedWhite.map(p=>pieces[p]).join(' ');
+ document.getElementById('capturedBlack').textContent='Black captured: '+capturedBlack.map(p=>pieces[p]).join(' ');
 }
 
 function click2D(x,y){
  let p=boardState[y][x];
  if(selected&&canMove(selected.x,selected.y,x,y)){
-   move(selected.x,selected.y,x,y); selected=null; return;
+  move(selected.x,selected.y,x,y);selected=null;return;
  }
- if(p!='.'&&((turn=='w'&&isWhite(p))||(turn=='b'&&!isWhite(p)))) selected={x,y};
+ if(p!='.'&&((turn=='w'&&isWhite(p))||(turn=='b'&&!isWhite(p))))selected={x,y};
  draw();
 }
 
 function move(x1,y1,x2,y2){
- let r=[...boardState[y1]]; let p=r[x1]; r[x1]='.'; boardState[y1]=r.join('');
- r=[...boardState[y2]]; r[x2]=p; boardState[y2]=r.join('');
+ let target=boardState[y2][x2];
+ if(target!='.'){
+  if(target.toLowerCase()==='k'){showWin(turn=='w'?'White':'Black');return;}
+  if(isWhite(target))capturedWhite.push(target);
+  else capturedBlack.push(target);
+ }
+ let r=[...boardState[y1]];let p=r[x1];r[x1]='.';boardState[y1]=r.join('');
+ r=[...boardState[y2]];r[x2]=p;boardState[y2]=r.join('');
+
+ if(p.toLowerCase()==='p'&&(y2===0||y2===7)){
+  promotionTarget={x:x2,y:y2,color:isWhite(p)};
+  showPromotion();
+ }else{
+  turn=turn=='w'?'b':'w';
+ }
+
+ if(mode==='online'&&conn)conn.send({boardState,turn,capturedWhite,capturedBlack});
+ draw();
+ if(mode==='single'&&turn==='b')setTimeout(aiMove,400);
+}
+
+function showPromotion(){
+ const box=document.getElementById('promotionChoices');
+ box.innerHTML='';
+ let pool=promotionTarget.color?capturedWhite:capturedBlack;
+ let options=pool.length?pool.map(p=>p.toLowerCase()):['q','r','b','n'];
+ options.forEach(o=>{
+  let piece=promotionTarget.color?o.toUpperCase():o;
+  let btn=document.createElement('button');
+  btn.textContent=pieces[piece];
+  btn.onclick=()=>promote(piece,o);
+  box.appendChild(btn);
+ });
+ document.getElementById('promotionModal').style.display='block';
+}
+
+function promote(piece,base){
+ let row=[...boardState[promotionTarget.y]];
+ row[promotionTarget.x]=piece;
+ boardState[promotionTarget.y]=row.join('');
+ if(promotionTarget.color){
+  let idx=capturedWhite.indexOf(base.toUpperCase());
+  if(idx>-1)capturedWhite.splice(idx,1);
+ }else{
+  let idx=capturedBlack.indexOf(base);
+  if(idx>-1)capturedBlack.splice(idx,1);
+ }
+ document.getElementById('promotionModal').style.display='none';
+ promotionTarget=null;
  turn=turn=='w'?'b':'w';
- if(conn) conn.send({boardState,turn}); draw(); if(window.updateAR) updateAR();
+ draw();
+}
+
+function showWin(player){
+ document.getElementById('winText').textContent=player+' Wins!';
+ document.getElementById('winScreen').style.display='flex';
+}
+
+function closeWin(){
+ document.getElementById('winScreen').style.display='none';
+ initBoard();
+}
+
+function aiMove(){
+ let blacks=[];
+ for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+  let p=boardState[y][x];if(p!='.'&&!isWhite(p))blacks.push({x,y});
+ }
+ if(!blacks.length)return;
+ let from=blacks[Math.floor(Math.random()*blacks.length)];
+ let to={x:Math.floor(Math.random()*8),y:Math.floor(Math.random()*8)};
+ if(canMove(from.x,from.y,to.x,to.y))move(from.x,from.y,to.x,to.y);
+ else aiMove();
 }
 
 function canMove(x1,y1,x2,y2){
- let p=boardState[y1][x1]; if(boardState[y2][x2]!='.' && isWhite(p)==isWhite(boardState[y2][x2])) return false;
- let dx=x2-x1, dy=y2-y1;
- if(p.toLowerCase()=='p'){ let d=isWhite(p)?-1:1, s=isWhite(p)?6:1;
-  if(dx==0&&dy==d&&boardState[y2][x2]=='.') return true;
-  if(dx==0&&y1==s&&dy==d*2&&boardState[y1+d][x1]=='.') return true;
-  if(Math.abs(dx)==1&&dy==d&&boardState[y2][x2]!='.') return true; return false;
- }
- if(p.toLowerCase()=='r') return clearPath(x1,y1,x2,y2)&&(dx==0||dy==0);
- if(p.toLowerCase()=='b') return clearPath(x1,y1,x2,y2)&&Math.abs(dx)==Math.abs(dy);
- if(p.toLowerCase()=='q') return clearPath(x1,y1,x2,y2)&&(dx==0||dy==0||Math.abs(dx)==Math.abs(dy));
- if(p.toLowerCase()=='n') return Math.abs(dx*dy)==2;
- if(p.toLowerCase()=='k') return Math.abs(dx)<=1&&Math.abs(dy)<=1;
+ let p=boardState[y1][x1];if(boardState[y2][x2]!='.'&&isWhite(p)==isWhite(boardState[y2][x2]))return false;
+ let dx=x2-x1,dy=y2-y1;
+ if(p.toLowerCase()=='p'){let d=isWhite(p)?-1:1,s=isWhite(p)?6:1;
+  if(dx==0&&dy==d&&boardState[y2][x2]=='.')return true;
+  if(dx==0&&y1==s&&dy==d*2&&boardState[y1+d][x1]=='.')return true;
+  if(Math.abs(dx)==1&&dy==d&&boardState[y2][x2]!='.')return true;return false;}
+ if(p.toLowerCase()=='r')return clearPath(x1,y1,x2,y2)&&(dx==0||dy==0);
+ if(p.toLowerCase()=='b')return clearPath(x1,y1,x2,y2)&&Math.abs(dx)==Math.abs(dy);
+ if(p.toLowerCase()=='q')return clearPath(x1,y1,x2,y2)&&(dx==0||dy==0||Math.abs(dx)==Math.abs(dy));
+ if(p.toLowerCase()=='n')return Math.abs(dx*dy)==2;
+ if(p.toLowerCase()=='k')return Math.abs(dx)<=1&&Math.abs(dy)<=1;
  return false;
 }
 
-function clearPath(x1,y1,x2,y2){
- let dx=Math.sign(x2-x1), dy=Math.sign(y2-y1); x1+=dx;y1+=dy;
- while(x1!=x2||y1!=y2){ if(boardState[y1][x1]!='.') return false; x1+=dx; y1+=dy;}
- return true;
-}
+function clearPath(x1,y1,x2,y2){let dx=Math.sign(x2-x1),dy=Math.sign(y2-y1);x1+=dx;y1+=dy;while(x1!=x2||y1!=y2){if(boardState[y1][x1]!='.')return false;x1+=dx;y1+=dy;}return true}
 
-function showMoves(){if(!selected) return;
- document.querySelectorAll('.square').forEach((s,i)=>{
- let x=i%8,y=Math.floor(i/8); if(canMove(selected.x,selected.y,x,y)) s.classList.add('move');});
-}
+function startLocal(){mode='local';showGame()}
+function startSingle(){mode='single';showGame()}
+function startOnline(){mode='online';peer=new Peer(username.value||'host');peer.on('connection',c=>{conn=c;setupConn()});showGame()}
+function joinOnline(){mode='online';peer=new Peer();peer.on('open',()=>{conn=peer.connect(joinId.value);setupConn()});showGame()}
+function setupConn(){conn.on('data',d=>{boardState=d.boardState;turn=d.turn;capturedWhite=d.capturedWhite||[];capturedBlack=d.capturedBlack||[];draw()})}
 
-function startLocal(){document.getElementById('menu').style.display='none'; document.getElementById('game').style.display='block'; initBoard();}
-function startOnline(){myColor='w'; peer=new Peer(username.value||'host'); peer.on('connection',c=>{conn=c; setupConn();}); startLocal();}
-function joinOnline(){myColor='b'; peer=new Peer(); peer.on('open',()=>{conn=peer.connect(joinId.value); setupConn();}); startLocal();}
-function setupConn(){conn.on('data',d=>{boardState=d.boardState; turn=d.turn; draw(); if(window.updateAR) updateAR();});}
-
-// ================= AR =================
-function startAR(){
- document.body.innerHTML=`
- <a-scene embedded arjs='sourceType: webcam; debugUIEnabled: false;'>
-   <a-entity camera></a-entity>
-   <a-entity id='arBoard'></a-entity>
- </a-scene>`;
- makeAR();
-}
-
-function makeAR(){
- const board=document.getElementById('arBoard');
- const s=.25;
- for(let y=0;y<8;y++){
-  for(let x=0;x<8;x++){
-   let c=(x+y)%2?'#333':'#ddd';
-   let tile=document.createElement('a-box');
-   tile.setAttribute('position',`${(x-3.5)*s} 0 ${(y-3.5)*s}`);
-   tile.setAttribute('width',s); tile.setAttribute('height',0.02); tile.setAttribute('depth',s);
-   tile.setAttribute('color',c); tile.dataset.x=x; tile.dataset.y=y;
-   tile.addEventListener('click',()=>arPick(x,y));
-   board.appendChild(tile);
-  }
- }
- updateAR();
-}
-
-let arSelected=null;
-function arPick(x,y){
- if(arSelected && canMove(arSelected.x,arSelected.y,x,y)){
-  move(arSelected.x,arSelected.y,x,y); arSelected=null;
- } else {
-  let p=boardState[y][x]; if(p!='.' && ((turn=='w'&&isWhite(p))||(turn=='b'&&!isWhite(p)))) arSelected={x,y};
- }
-}
-
-function updateAR(){
- const board=document.getElementById('arBoard'); if(!board) return;
- board.querySelectorAll('a-sphere').forEach(e=>e.remove());
- const s=.25;
- boardState.forEach((row,y)=>[...row].forEach((c,x)=>{if(c=='.')return;
-  let piece=document.createElement('a-sphere');
-  piece.setAttribute('radius',.06);
-  piece.setAttribute('color',isWhite(c)?'#fff':'#000');
-  piece.setAttribute('position',`${(x-3.5)*s} .08 ${(y-3.5)*s}`);
-  piece.dataset.x=x; piece.dataset.y=y;
-  piece.addEventListener('click',()=>arPick(x,y)); board.appendChild(piece);
- }));
-}
+function showGame(){document.getElementById('menu').style.display='none';document.getElementById('game').style.display='block';initBoard()}
 
 initBoard();
 </script>
